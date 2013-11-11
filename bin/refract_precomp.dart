@@ -1,10 +1,9 @@
 import 'dart:io';
 import 'dart:convert';
 
-
 void main() {
   final String inFileName  = 'monkey-2.js';
-  final String outFileName = 'monkey-2.bb';
+  final String outFileName = 'monkey-2.bof';
   
   var inData = new File(inFileName).readAsStringSync();
   var js = JSON.decode(inData);
@@ -12,6 +11,27 @@ void main() {
   var indices  = new List<int>();
   var vertices = new List<List<double>>();
   jsonToBufs(js, indices, vertices);
+  
+  var outputObj = {
+    "metadata"      : {
+      "format"        : "Buffer Object Format",
+      "formatVersion" : 1.0,
+      "elements"      : {
+        "Position"      : 3,
+        "Normal"        : 3,
+        "NormalThick"   : 1,
+      }
+    },
+    "indices"       : indices,
+    "attributes"    : {
+      "Position"      : vertices[0],
+      "Normal"        : vertices[1],
+      "NormalThick"   : [],
+    }
+  };
+  
+  var outputData = JSON.encode(outputObj);
+  new File(outFileName).writeAsStringSync(outputData);
 }
 
 void jsonToBufs(var js, List<int> indices, List<List<double>> vertices) {
@@ -30,7 +50,8 @@ void jsonToBufs(var js, List<int> indices, List<List<double>> vertices) {
   //var indices = new List<int>();
   var outVerts = new List<double>();
   var outNorms = new List<double>();
-  
+  var uniques  = {};
+
   // Read in all the indices from the face array
   int offset = 0, nVerts = 0;
   while (offset < faces.length) {
@@ -44,108 +65,57 @@ void jsonToBufs(var js, List<int> indices, List<List<double>> vertices) {
     bool hasVertNormal  = (type & 1<<5) != 0;
     bool hasFaceColor   = (type & 1<<6) != 0;
     bool hasVertColor   = (type & 1<<7) != 0;
-    var ptrs;
+
+    var ptrs = [];
+    for (int i = 0; i < (isQuad?4:3); i++)
+      ptrs.add([faces[offset++], -1]);
     
-    if (isQuad) {
-      ptrs = [new _UniqueVertIndexes(vert: faces[offset++]),
-              new _UniqueVertIndexes(vert: faces[offset++]),
-              new _UniqueVertIndexes(vert: faces[offset++]),
-              new _UniqueVertIndexes(vert: faces[offset++])];
-    } else {
-      ptrs = [new _UniqueVertIndexes(vert: faces[offset++]),
-              new _UniqueVertIndexes(vert: faces[offset++]),
-              new _UniqueVertIndexes(vert: faces[offset++])];
-    }
     
-    if (hasMaterial) {
-      var mat = faces[offset++];
-      for (var ptr in ptrs) 
-        ptr.mat = mat; 
-    }
-    
-    if (hasFaceUv) {
-      var uv = faces[offset++];
-      for (var ptr in ptrs)
-        ptr.uv = uv;
-    }
-    
-    if (hasVertUv) {
-      for (var ptr in ptrs)
-        ptr.uv = faces[offset++];
-    }
-    
-    if (hasFaceNormal) {
-      var norm = faces[offset++];
-      for (var ptr in ptrs)
-        ptr.norm = norm;
-    }
-    
+    if (hasMaterial)    offset++;    
+    if (hasFaceUv)      offset++;    
+    if (hasVertUv)      offset += isQuad?4:3;
+    if (hasFaceNormal)  offset++;
     if (hasVertNormal) {
       for (var ptr in ptrs)
-        ptr.norm = faces[offset++];
+        ptr[1] = faces[offset++];
     }
+    if (hasFaceColor) offset++;
+    if (hasVertColor) offset += isQuad?4:3;
     
-    if (hasFaceColor) {
-      var color = faces[offset++];
-      for (var ptr in ptrs)
-        ptr.color = color;
-    }
-    
-    if (hasVertColor) {
-      for (var ptr in ptrs)
-        ptr.color = faces[offset++];
-    }
-    
-    // Now keep all the unique combinations
+    // Get indexes
+    var uniqueIndexes = [];
     for (var ptr in ptrs) {
-      ptr.index = nVerts++;
-      outVerts.add(verts[ptr.vert*3+0].toDouble());
-      outVerts.add(verts[ptr.vert*3+1].toDouble());
-      outVerts.add(verts[ptr.vert*3+2].toDouble());
-      
-      outNorms.add(normals[ptr.norm*3+0].toDouble());
-      outNorms.add(normals[ptr.norm*3+1].toDouble());
-      outNorms.add(normals[ptr.norm*3+2].toDouble());
+      var ptrString = ptr.toString();
+      if (!uniques.containsKey(ptrString)) {
+        uniqueIndexes.add(uniques.length);
+        uniques[ptrString] = uniques.length;
+        
+        outVerts.add(verts[ptr[0]*3+0].toDouble());
+        outVerts.add(verts[ptr[0]*3+1].toDouble());
+        outVerts.add(verts[ptr[0]*3+2].toDouble());
+        
+        outNorms.add(normals[ptr[1]*3+0].toDouble());
+        outNorms.add(normals[ptr[1]*3+1].toDouble());
+        outNorms.add(normals[ptr[1]*3+2].toDouble());
+      } else {
+        uniqueIndexes.add(uniques[ptrString]);
+      }
     }
-    
+        
     if (isQuad) {
-      indices.add(ptrs[0].index);
-      indices.add(ptrs[1].index);
-      indices.add(ptrs[2].index);
-      indices.add(ptrs[0].index);
-      indices.add(ptrs[2].index);
-      indices.add(ptrs[3].index);
+      indices.add(uniqueIndexes[0]);
+      indices.add(uniqueIndexes[1]);
+      indices.add(uniqueIndexes[2]);
+      indices.add(uniqueIndexes[0]);
+      indices.add(uniqueIndexes[2]);
+      indices.add(uniqueIndexes[3]);
     } else {
-      indices.add(ptrs[0].index);
-      indices.add(ptrs[1].index);
-      indices.add(ptrs[2].index);
+      indices.add(uniqueIndexes[0]);
+      indices.add(uniqueIndexes[1]);
+      indices.add(uniqueIndexes[2]);
     }
   }
-  
-  //vertices = new List<List<double>>();
+
   vertices.add(outVerts);
   vertices.add(outNorms);
-
-}
-
-class _UniqueVertIndexes {
-  int vert, mat, norm, id, color, index;
-  _UniqueVertIndexes({this.vert: -1, this.mat: -1, this.norm: -1, 
-                      this.id:   -1, this.color: -1});
-  int get hashCode {
-    int result = 17;
-    result = 37 * result * vert.hashCode;
-    result = 37 * result * mat.hashCode;
-    result = 37 * result * norm.hashCode;
-    result = 37 * result * id.hashCode;
-    result = 37 * result * color.hashCode;
-    return result;
-  }
-  bool operator==(other) {
-    return this.vert  == other.vert &&
-           this.mat   == other.mat  &&
-           this.norm  == other.norm &&
-           this.id    == other.id   &&
-           this.color == other.color;
-  }
 }
