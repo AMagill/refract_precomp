@@ -1,8 +1,9 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:vector_math/vector_math.dart';
 
 void main() {
-  final String inFileName  = 'monkey-2.js';
+  final String inFileName  = 'monkey-3.js';
   final String outFileName = 'monkey-2.bof';
   
   var inData = new File(inFileName).readAsStringSync();
@@ -12,10 +13,40 @@ void main() {
   var vertices = new List<List<double>>();
   jsonToBufs(js, indices, vertices);
   
+  
+  // Compute the normal thickness
+  var nthick = [];
+  var allTriangles = [];
+  
+  for (int j = 0; j < indices.length; j+=3) {
+   allTriangles.add(new Triangle.points(
+        new Vector3.array(vertices[0], indices[j+0]*3),
+        new Vector3.array(vertices[0], indices[j+1]*3),
+        new Vector3.array(vertices[0], indices[j+2]*3)));
+  }
+  
+  for (int i = 0; i < vertices[0].length; i+=3) {
+    var maxDist = double.NEGATIVE_INFINITY;
+    var ray = new Ray.originDirection(
+        new Vector3.array(vertices[0], i),
+        -(new Vector3.array(vertices[1], i)));
+    
+    for (var tri in allTriangles) {
+      var dist = ray.intersectsWithTriangle(tri);
+      if (dist != null && dist > maxDist)
+        maxDist = dist;
+    }
+    if (maxDist == double.NEGATIVE_INFINITY)
+      maxDist = 1000.0;
+    nthick.add(maxDist);
+  }
+  
+  var nVertices = vertices[0].length ~/ 3;
   var outputObj = {
     "metadata"      : {
       "format"        : "Buffer Object Format",
       "formatVersion" : 1.0,
+      "vertices"      : nVertices,
       "elements"      : {
         "Position"      : 3,
         "Normal"        : 3,
@@ -26,7 +57,7 @@ void main() {
     "attributes"    : {
       "Position"      : vertices[0],
       "Normal"        : vertices[1],
-      "NormalThick"   : [],
+      "NormalThick"   : nthick,
     }
   };
   
